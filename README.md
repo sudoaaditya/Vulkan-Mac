@@ -1,6 +1,6 @@
 # Vulkan on macOS
 
-A collection of Vulkan code samples and setup notes for macOS using MoltenVK.
+A collection of Vulkan code projects macOS using MoltenVK.
 
 ---
 
