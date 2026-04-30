@@ -1,0 +1,5 @@
+Log File Created Successfully!!
+
+Initalization Succeeded!!...
+
+Log File Closed Successfully!!
