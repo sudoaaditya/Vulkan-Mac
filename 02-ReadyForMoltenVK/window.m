@@ -1,9 +1,15 @@
 #import <Foundation/Foundation.h>
 #import <Cocoa/Cocoa.h>
 
+#import <QuartzCore/CVDisplayLink.h> // for CoreVideo  - for gameloop
+#import <QuartzCore/CAMetalLayer.h> // for Metal based CoreAnimation Layer - for surface
+
 // Macros
 #define WIN_WIDTH 800
 #define WIN_HEIGHT 600
+
+//C Style Function For DisplayLink!.
+CVReturn displayLinkCallback (CVDisplayLinkRef, const CVTimeStamp *, const CVTimeStamp *, CVOptionFlags, CVOptionFlags *, void *);
 
 // Global Variables Declaration
 int winWidth = WIN_WIDTH;
@@ -21,6 +27,8 @@ FILE *fptr = NULL;
 
 @interface View: NSView <NSWindowDelegate>
 @end
+
+
 
 // Main
 int main(int argc, char *argv[])
@@ -59,7 +67,6 @@ int main(int argc, char *argv[])
     fptr = fopen(szLogFileName, "w");
     if(fptr == NULL) {
         printf("Cannot Create Log File!...");
-        [self release];
         [NSApp terminate:self];
     }
     else {
@@ -89,9 +96,6 @@ int main(int argc, char *argv[])
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
     // Code
-    [self release];
-    fprintf(fptr, "\nLog File Closed Successfully!!");
-    fclose(fptr);
 }
 
 - (void) dealloc {
@@ -103,13 +107,19 @@ int main(int argc, char *argv[])
 @end
 
 // View Implementation
-@implementation View
+@implementation View {
+    @private
+        CVDisplayLinkRef displayLink;
+}
 
 - (id) initWithFrame:(NSRect) rect {
     // Code
     self =[super initWithFrame:rect];
     
     if(self){
+
+        // Convert Our view into CAMetalLayer'ed backing view.
+        [self setWantsLayer: YES];
         
         int result = [self initialize];
         if(result != 0) {
@@ -117,6 +127,13 @@ int main(int argc, char *argv[])
         } else {
             fprintf(fptr, "Initalization Succeeded!!...\n");
         }
+
+        // Create DisplayLink capable of being used with all active displays
+        CVDisplayLinkCreateWithActiveCGDisplays(&displayLink);
+        // Set the display link as our renderer output callback
+        CVDisplayLinkSetOutputCallback(displayLink, &displayLinkCallback, self);
+        // Activate the display link
+        CVDisplayLinkStart(displayLink);
     }
     return self;
 }
@@ -134,17 +151,23 @@ int main(int argc, char *argv[])
 - (NSSize) windowWillResize:(NSWindow *)sender toSize:(NSSize) frameSize {
     // Code
     if(bWindowMinimized == NO) {
+        CVDisplayLinkStop(displayLink);
         [self resize: frameSize.width : frameSize.height];
     }
     return frameSize;
 }
 
 - (void) windowDidResize:(NSNotification *)notification {
+    // start display link again after resizing is done.
+    if(bWindowMinimized == NO) {   
+        CVDisplayLinkStart(displayLink);
+    }
 }
 
 - (void) windowWillMiniaturize:(NSNotification *)notification {
     // Code
     bWindowMinimized = YES;
+    CVDisplayLinkStop(displayLink);
 }
 
 - (void) windowDidMiniaturize:(NSNotification *)notification {
@@ -153,6 +176,7 @@ int main(int argc, char *argv[])
 - (void) windowDidDeminiaturize:(NSNotification *)notification {
     // Code
     bWindowMinimized = NO;
+    CVDisplayLinkStart(displayLink);
 }
 
 - (void) windowWillClose:(NSNotification *)notification {
@@ -161,15 +185,46 @@ int main(int argc, char *argv[])
     [NSApp terminate: self];
 }
 
-- (void) drawRect:(NSRect) dirtyRect {
+- (CVReturn) getFrameForTime:(const CVTimeStamp *) outputTime {
     // Code
-    [self drawView: dirtyRect];
+    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+
+    // render the scene
+    [self drawView];
+
+    [pool release];
+    return kCVReturnSuccess;
 }
 
-- (void) drawView: (NSRect) dirtyRect {
+- (void) drawRect:(NSRect) dirtyRect {
+    // Code
+    [self drawView];
+}
+
+- (void) drawView {
     // Code
     [self display];
     [self update];
+}
+
+// To have setWantsLayer function successfull we need to override following two functions
++ (Class) layerClass {
+    // Code
+    return [CAMetalLayer class];
+}
+
+// to have the result of setWantsLayer as YES, we need to override this function and return YES.
+- (BOOL) wantsUpdateLayer {
+    return YES;
+}
+
+// to have the result of setWantsLayer, we need to override this function and return a custom layer.
+- (CALayer *) makeBackingLayer {
+    // Code
+    CALayer *layer = [[[self class] layerClass] layer];
+    CGSize viewSize = [self convertSizeToBacking:CGSizeMake(1.0, 1.0)];
+    [layer setContentsScale: MIN(viewSize.width, viewSize.height)];
+    return layer;
 }
 
 // To Make View As First Responder.
@@ -209,6 +264,11 @@ int main(int argc, char *argv[])
 
 - (void) dealloc {
     // Code
+    if(displayLink) {
+        CVDisplayLinkStop(displayLink);
+        CVDisplayLinkRelease(displayLink);
+        displayLink = NULL;
+    }
     [super dealloc];
 }
 
@@ -240,6 +300,13 @@ int main(int argc, char *argv[])
     if(fptr) {
         fprintf(fptr, "\nLog File Closed Successfully!!");
         fclose(fptr);
+        fptr = NULL;
     }
 }
 @end
+
+CVReturn displayLinkCallback (CVDisplayLinkRef displayLink, const CVTimeStamp *now, const CVTimeStamp *outputTime, CVOptionFlags flagsIn, CVOptionFlags *flagsOut, void *renderer) {
+    // Code
+    CVReturn result = [(View*)renderer getFrameForTime: outputTime];
+    return result;
+}
